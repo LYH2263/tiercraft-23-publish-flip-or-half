@@ -4,3 +4,6 @@ node_modules/
 dist/
 data/
 .pytest_cache/
+
+# 本地 Python 虚拟环境
+.venv/

@@ -322,6 +322,16 @@ tr:hover td { background: #f0f5fa; }
 }
 .badge-draft { color: var(--warn); border-color: var(--warn); }
 .badge-pub { color: var(--ok); border-color: var(--ok); }
+.proof {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+  margin: 10px 0 16px;
+  background: #f8fbfe;
+}
+.proof h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.proof table { margin-bottom: 0; }
+.proof th { width: 8em; }
 .err {
   color: #b91c1c;
   margin: 8px 0 14px;

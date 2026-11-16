@@ -79,12 +79,12 @@ async function publish(domainId) {
       </div>
 
       <div class="panel">
-        <h3>主题域发布近况</h3>
+        <h3>主题域发布近况 <span class="muted">（草稿与已发布分表，数字与发布证明同源）</span></h3>
         <table>
           <thead>
             <tr>
               <th>编号</th><th>名称</th><th>业务键</th><th>汇总草稿</th><th>已发布</th>
-              <th>最近对账</th><th>最近发布</th><th>发布入口</th>
+              <th>最近对账</th><th>最近发布</th><th>当前发布证明</th><th>发布入口</th>
             </tr>
           </thead>
           <tbody>
@@ -92,14 +92,30 @@ async function publish(domainId) {
               <td>{{ d.编号 }}</td>
               <td>{{ d.名称 }}</td>
               <td>{{ d.业务键 }}</td>
-              <td>{{ d.汇总草稿行数 }}</td>
-              <td>{{ d.已发布行数 }}</td>
-              <td :class="d.最近对账状态 === '一致' ? 'ok' : 'warn'">{{ d.最近对账状态 }}</td>
+              <td><span class="badge badge-draft">草稿</span> {{ d.汇总草稿行数 }} 行</td>
+              <td><span class="badge badge-pub">已发布</span> {{ d.已发布行数 }} 行</td>
+              <td :class="d.最近对账状态 === '一致' ? 'ok' : 'warn'">
+                {{ d.最近对账状态 }}
+                <span v-if="d.最近对账报告编号" class="muted">（报告 {{ d.最近对账报告编号 }}）</span>
+              </td>
               <td>
                 <span :class="d.最近发布状态 === '成功' ? 'ok' : (d.最近发布状态 === '拒绝' ? 'warn' : '')">
                   {{ d.最近发布状态 }}
                 </span>
                 <div v-if="d.发布拒绝原因" class="warn reason">{{ d.发布拒绝原因 }}</div>
+              </td>
+              <td>
+                <template v-if="d.当前发布编号">
+                  <router-link :to="{ path: '/summary', query: { publish: d.当前发布编号 } }">
+                    发布 {{ d.当前发布编号 }}
+                  </router-link>
+                  <div class="muted">
+                    对账报告 {{ d.证明对账报告编号 ?? '—' }} · {{ d.证明发布时间 }}<br>
+                    证明行数 {{ d.证明行数 }} / 发布区 {{ d.证明发布区行数 }} 行 ·
+                    <span :class="d.证明成败 === '成功' ? 'ok' : 'warn'">{{ d.证明成败 }}</span>
+                  </div>
+                </template>
+                <span v-else class="muted">尚无已发布快照</span>
               </td>
               <td>
                 <button
@@ -146,7 +162,7 @@ async function publish(domainId) {
         <h3>最近发布记录</h3>
         <table v-if="data.最近发布.length">
           <thead>
-            <tr><th>编号</th><th>主题域</th><th>状态</th><th>对账报告</th><th>行数</th><th>原因</th><th>时间</th></tr>
+            <tr><th>编号</th><th>主题域</th><th>状态</th><th>对账报告</th><th>证明行数</th><th>证明时间</th><th>证明成败</th><th>原因</th></tr>
           </thead>
           <tbody>
             <tr v-for="p in data.最近发布" :key="p.编号">
@@ -154,9 +170,10 @@ async function publish(domainId) {
               <td>{{ p.主题域编号 }}</td>
               <td :class="p.状态 === '成功' ? 'ok' : 'warn'">{{ p.状态 }}</td>
               <td>{{ p.对账报告编号 ?? '—' }}</td>
-              <td>{{ p.行数 }}</td>
+              <td>{{ p.证明行数 }} / 记录 {{ p.行数 }}</td>
+              <td>{{ p.证明发布时间 || p.时间 }}</td>
+              <td :class="p.证明成败 === '成功' ? 'ok' : 'warn'">{{ p.证明成败 }}</td>
               <td>{{ p.原因 || '—' }}</td>
-              <td>{{ p.时间 }}</td>
             </tr>
           </tbody>
         </table>

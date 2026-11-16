@@ -186,3 +186,131 @@ def test_layer_rows_isolated_between_states(fresh_db):
     # 发布副本带 publish_id，草稿没有——两表结构即隔离
     assert all("publish_id" in r for r in published_rows)
     assert all("publish_id" not in r for r in draft_rows)
+
+
+def test_publish_evidence_recorded_and_readable_by_id(fresh_db):
+    build_to_draft()
+    report = pipeline.run_reconcile(DOMAIN_ID)
+    rec = pipeline.publish_summary(DOMAIN_ID)
+    assert rec["status"] == "成功"
+
+    ev = one("SELECT * FROM publish_evidence WHERE publish_id=?", (rec["id"],))
+    assert ev["reconcile_report_id"] == report["id"]
+    assert ev["row_count"] == 4
+    assert ev["success"] == 1
+    assert ev["published_at"]
+
+    detail = pipeline.publish_detail(rec["id"])
+    assert detail["发布记录"]["id"] == rec["id"]
+    assert detail["发布证明"]["row_count"] == 4
+    assert detail["发布证明"]["reconcile_report_id"] == report["id"]
+    assert len(detail["已发布行"]) == 4
+    assert all(r["publish_id"] == rec["id"] for r in detail["已发布行"])
+
+    # 已发布行数、证明行数与草稿快照同源
+    assert detail["发布证明"]["row_count"] == one(
+        "SELECT COUNT(*) AS c FROM layer_summary_published WHERE publish_id=?", (rec["id"],)
+    )["c"]
+
+
+def test_rejected_publish_has_evidence_without_published_rows(fresh_db):
+    build_to_draft()
+    rec = pipeline.publish_summary(DOMAIN_ID)
+    assert rec["status"] == "拒绝"
+    ev = one("SELECT * FROM publish_evidence WHERE publish_id=?", (rec["id"],))
+    assert ev["success"] == 0
+    assert ev["row_count"] == 0
+    assert ev["reconcile_report_id"] is None
+    assert "对账" in ev["reject_reason"]
+    assert pipeline.publish_detail(rec["id"])["已发布行"] == []
+    assert one("SELECT COUNT(*) AS c FROM layer_summary_published")["c"] == 0
+
+
+def test_stale_success_does_not_survive_failed_reconcile(fresh_db):
+    build_to_draft()
+    pipeline.run_reconcile(DOMAIN_ID)
+    first = pipeline.publish_summary(DOMAIN_ID)
+    assert first["status"] == "成功"
+
+    # 明细直接加行而不再汇总：生成新的差异对账后发布必须被拒，
+    # 旧发布区不得被覆盖成半截，也不得回落到旧一致报告放行
+    conn = db.connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO layer_detail(
+              domain_id, biz_day, store_code, store_name, category, amount, qty, clean_flag
+            ) VALUES (?, '2026-11-12', 'S09', '城南店', '饮料', 10.0, 1, '已清洗')
+            """,
+            (DOMAIN_ID,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    diff = pipeline.run_reconcile(DOMAIN_ID)
+    assert diff["status"] == "存在差异"
+    rejected = pipeline.publish_summary(DOMAIN_ID)
+    assert rejected["status"] == "拒绝"
+    assert rejected["reconcile_report_id"] == diff["id"]
+    # 已发布区仍是上一次成功发布的整份快照
+    rows = q("SELECT * FROM layer_summary_published WHERE domain_id=?", (DOMAIN_ID,))
+    assert len(rows) == 4
+    assert {r["publish_id"] for r in rows} == {first["id"]}
+
+
+def test_publish_write_failure_leaves_published_area_intact(fresh_db, monkeypatch):
+    build_to_draft()
+    pipeline.run_reconcile(DOMAIN_ID)
+    first = pipeline.publish_summary(DOMAIN_ID)
+    assert first["status"] == "成功"
+    before = q("SELECT * FROM layer_summary_published WHERE domain_id=? ORDER BY id", (DOMAIN_ID,))
+
+    # 让快照校验失败，模拟发布写入半途出错
+    def boom(conn, publish_id, draft):
+        raise RuntimeError("模拟写入中断")
+
+    monkeypatch.setattr(pipeline, "_verify_snapshot", boom)
+    rec = pipeline.publish_summary(DOMAIN_ID)
+    assert rec["status"] == "拒绝"
+    assert "整单回滚" in rec["reason"]
+    after = q("SELECT * FROM layer_summary_published WHERE domain_id=? ORDER BY id", (DOMAIN_ID,))
+    assert [(r["id"], r["publish_id"], r["store_code"]) for r in after] == [
+        (r["id"], r["publish_id"], r["store_code"]) for r in before
+    ]
+    # 失败发布不残留半截批次
+    assert one(
+        "SELECT COUNT(*) AS c FROM layer_summary_published WHERE publish_id=?", (rec["id"],)
+    )["c"] == 0
+
+
+def test_overview_exposes_evidence_fields(fresh_db):
+    build_to_draft()
+    report = pipeline.run_reconcile(DOMAIN_ID)
+    rec = pipeline.publish_summary(DOMAIN_ID)
+    overview = next(d for d in pipeline.domain_publish_overview() if d["编号"] == DOMAIN_ID)
+    assert overview["当前发布编号"] == rec["id"]
+    assert overview["证明对账报告编号"] == report["id"]
+    assert overview["证明行数"] == 4
+    assert overview["证明发布区行数"] == 4
+    assert overview["证明成败"] == "成功"
+    assert overview["证明发布时间"]
+
+
+def test_publish_detail_endpoint(fresh_db, monkeypatch):
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    # 让应用启动时沿用测试库，而不是默认 DATA_DIR
+    monkeypatch.setattr(seed, "init_db", lambda: None)
+    with TestClient(app) as client:
+        build_to_draft()
+        pipeline.run_reconcile(DOMAIN_ID)
+        rec = pipeline.publish_summary(DOMAIN_ID)
+        res = client.get(f"/api/publish/{rec['id']}")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["发布证明"]["success"] == 1
+        assert body["发布证明"]["row_count"] == 4
+        assert client.get("/api/publish/999999").status_code == 404

@@ -67,6 +67,22 @@ CREATE TABLE IF NOT EXISTS publish_records (
   FOREIGN KEY(reconcile_report_id) REFERENCES reconcile_reports(id)
 );
 
+-- 发布证明：每次发布尝试（成功/拒绝）一条，记录对账报告引用、发布时间、行数、成败。
+-- 与发布记录、已发布区在同一事务内写入，供按发布记录 id 只读查询。
+CREATE TABLE IF NOT EXISTS publish_evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  publish_id INTEGER NOT NULL UNIQUE,
+  domain_id INTEGER NOT NULL,
+  reconcile_report_id INTEGER,
+  published_at TEXT NOT NULL DEFAULT (datetime('now')),
+  row_count INTEGER NOT NULL DEFAULT 0,
+  success INTEGER NOT NULL DEFAULT 0,
+  reject_reason TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(publish_id) REFERENCES publish_records(id),
+  FOREIGN KEY(domain_id) REFERENCES domains(id),
+  FOREIGN KEY(reconcile_report_id) REFERENCES reconcile_reports(id)
+);
+
 -- 已发布汇总：独立发布副本，只能被一次成功发布整体替换，明细到汇总永不触碰
 CREATE TABLE IF NOT EXISTS layer_summary_published (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

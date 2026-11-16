@@ -15,6 +15,15 @@ def list_publish(domain_id: int | None = None):
     return pipeline.list_publish(domain_id)
 
 
+@router.get("/publish/{publish_id}")
+def get_publish(publish_id: int):
+    # 按发布记录 id 只读：发布记录 + 发布证明 + 该次发布的已发布快照
+    detail = pipeline.publish_detail(publish_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="发布记录不存在")
+    return detail
+
+
 @router.post("/publish")
 def publish(body: PublishBody):
     # 无论成功或拒绝都返回本次发布记录；拒绝时记录内含原因，且发布区不被触碰
